@@ -1,12 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { NAME } from "@/lib/mentions";
 import { scan } from "@/lib/sources";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
-
-// Letters, digits and the punctuation real brand names use. Keeps URLs and search operators out.
-const NAME = /^[\p{L}\p{N}][\p{L}\p{N} &.'+-]{1,39}$/u;
 
 // Best-effort only: each server instance keeps its own count. The CDN cache below does the heavy lifting.
 const HOURLY_LIMIT = 12;
@@ -40,11 +38,11 @@ export async function GET(request: NextRequest) {
   if (limited(ip)) return fail("rate_limited", 429);
 
   try {
-    const result = await scan(brand, terms);
-    if (result.sources.every((s) => !s.ok)) return fail("sources_down", 502);
+    const parts = await scan(brand, terms);
+    if (parts.every((p) => p.sources.every((s) => !s.ok))) return fail("sources_down", 502);
     // The same brand asked again within the hour is served from the CDN without touching the sources;
     // a visitor's own browser reuses its copy for five minutes.
-    return NextResponse.json(result, {
+    return NextResponse.json({ parts }, {
       headers: { "cache-control": "public, max-age=300, s-maxage=3600" },
     });
   } catch {

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Mention, ScanResult } from "@/lib/sources";
+import { NAME, summarize, type Gathered, type Mention, type ScanResult } from "@/lib/mentions";
+import { redditFromBrowser } from "@/lib/reddit";
 
 const WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP_URL || "https://wa.me/917505511899";
 
@@ -42,22 +43,41 @@ export default function Scanner() {
   const [filter, setFilter] = useState<Filter>("all");
 
   async function run(brandValue: string, termsValue: string) {
-    const b = brandValue.trim();
-    if (!b) return setError(ERRORS.bad_brand);
+    const b = brandValue.trim().replace(/\s+/g, " ");
+    const list = termsValue
+      .split(",")
+      .map((t) => t.trim().replace(/\s+/g, " "))
+      .filter(Boolean);
+    if (!NAME.test(b)) return setError(ERRORS.bad_brand);
+    if (list.length > 2 || list.some((t) => !NAME.test(t))) return setError(ERRORS.bad_terms);
     setBusy(true);
     setError(null);
     setResult(null);
     setFilter("all");
     const query = new URLSearchParams({ brand: b });
-    if (termsValue.trim()) query.set("terms", termsValue);
+    if (list.length) query.set("terms", list.join(","));
     window.history.replaceState(null, "", `?${query}`);
-    try {
-      const res = await fetch(`/api/scan?${query}`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) setError(ERRORS[data?.error] || ERRORS.scan_failed);
-      else setResult(data as ScanResult);
-    } catch {
-      setError("Network error. Check your connection and try again.");
+    // News and YouTube come from the server; Reddit only answers browsers, so the page asks it directly.
+    const [server, reddit] = await Promise.allSettled([
+      fetch(`/api/scan?${query}`).then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || "scan_failed");
+        return data.parts as Gathered[];
+      }),
+      redditFromBrowser([b, ...list]),
+    ]);
+    const parts = [
+      ...(server.status === "fulfilled" ? server.value : []),
+      ...(reddit.status === "fulfilled" ? reddit.value : []),
+    ];
+    if (server.status === "rejected" && !parts.some((p) => p.sources.some((s) => s.ok))) {
+      const code = (server.reason as Error)?.message;
+      setError(ERRORS[code] || "Network error. Check your connection and try again.");
+    } else {
+      if (server.status === "rejected") {
+        parts.unshift({ sources: [{ name: "Google News", ok: false, found: 0 }, { name: "YouTube", ok: false, found: 0 }], candidates: [] });
+      }
+      setResult(summarize(b, list, parts));
     }
     setBusy(false);
   }
@@ -248,8 +268,9 @@ export default function Scanner() {
 
             <p className="mt-4 text-xs leading-relaxed text-slate-500">
               Results are raw matches, not checked by a person or by AI. Reddit comes from a public archive
-              that runs about a week behind. &ldquo;Warning words&rdquo; only means the word appears in the
-              text. Quora, LinkedIn, X and Instagram are not covered.
+              (pullpush.io) that your browser asks directly; it runs about a week behind. &ldquo;Warning
+              words&rdquo; only means the word appears in the text. Quora, LinkedIn, X and Instagram are not
+              covered.
             </p>
           </section>
 
