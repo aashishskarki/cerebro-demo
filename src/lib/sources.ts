@@ -81,9 +81,9 @@ function host(url: string): string {
   }
 }
 
-async function get(url: string, ms = 9000): Promise<string> {
+async function get(url: string, ms = 9000, agent = UA): Promise<string> {
   const res = await fetch(url, {
-    headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9" },
+    headers: { "user-agent": agent, "accept-language": "en-US,en;q=0.9" },
     signal: AbortSignal.timeout(ms),
     cache: "no-store",
   });
@@ -140,10 +140,25 @@ async function bingNews(query: string): Promise<Raw[]> {
 async function reddit(query: string, kind: "submission" | "comment"): Promise<Raw[]> {
   const after = Math.floor((Date.now() - WINDOW_DAYS * DAY) / 1000);
   const q = encodeURIComponent(`"${query}"`);
-  const body = await get(
-    `https://api.pullpush.io/reddit/search/${kind}/?q=${q}&size=100&sort=desc&sort_type=created_utc&after=${after}`,
-    12000,
-  );
+  const url = `https://api.pullpush.io/reddit/search/${kind}/?q=${q}&size=100&sort=desc&sort_type=created_utc&after=${after}`;
+  let body: string;
+  try {
+    body = await get(url, 12000);
+  } catch (first) {
+    // EXPERIMENT: does the archive refuse the browser-like agent or the server's address?
+    try {
+      body = await get(url, 12000, "cerebro-demo/0.1 (+https://aashishkarki.com/projects/cerebro)");
+    } catch (second) {
+      let direct = "not tried";
+      try {
+        await get(`https://www.reddit.com/search.rss?q=${q}&sort=new&limit=25`, 8000);
+        direct = "ok";
+      } catch (third) {
+        direct = String((third as Error).message);
+      }
+      throw new Error(`archive ${(first as Error).message} / plain agent ${(second as Error).message} / reddit.com ${direct}`);
+    }
+  }
   const rows: Record<string, unknown>[] = JSON.parse(body).data || [];
   return rows.map((r) => {
     const text = String(r.body ?? r.selftext ?? "")
