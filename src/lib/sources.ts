@@ -12,7 +12,7 @@ export type Mention = {
   warning: string; // the warning word found in the text, "" when none
 };
 
-export type SourceHealth = { name: string; ok: boolean; found: number };
+export type SourceHealth = { name: string; ok: boolean; found: number; problem?: string };
 
 export type ScanResult = {
   brand: string;
@@ -264,7 +264,13 @@ export async function scan(brand: string, terms: string[]): Promise<ScanResult> 
           kept += 1;
         }
       }
-      return { name: job.name, ok: settled.some((s) => s.status === "fulfilled"), found: kept };
+      const failed = settled.find((s) => s.status === "rejected") as PromiseRejectedResult | undefined;
+      return {
+        name: job.name,
+        ok: settled.some((s) => s.status === "fulfilled"),
+        found: kept,
+        ...(failed ? { problem: String(failed.reason?.message || failed.reason).slice(0, 80) } : {}),
+      };
     }),
   );
 
